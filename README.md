@@ -27,32 +27,60 @@ A powerful, interactive dashboard to discover, compare, and select the best free
 ### Prerequisites
 
 - Python 3.10 or higher
+- pip (included with Python)
 - An OpenRouter API key ([Get one here](https://openrouter.ai/keys))
 
-### Installation
+### Automated Setup (Recommended)
 
-1. Clone the repository:
+1. Clone this repository
+2. Run the appropriate script for your operating system:
+
+   - Windows:
+     ```
+     .\run.ps1
+     ```
+   
+   - macOS/Linux:
+     ```
+     chmod +x run.sh
+     ./run.sh
+     ```
+
+This will automatically:
+- Create a virtual environment (`.venv`)
+- Install all required dependencies
+- Start the Streamlit application
+
+### Manual Setup
+
+If you prefer to run commands yourself without the helper scripts:
+
+1. Clone this repository
+2. Install uv (if not already installed):
    ```bash
-   git clone https://github.com/yourusername/openrouter_models.git
-   cd openrouter_models
+   pip install uv
+   ```
+3. Create a virtual environment:
+   ```bash
+   uv venv .venv --seed
+   ```
+4. Install dependencies:
+   ```bash
+   uv pip install -e .
+   ```
+5. Run the application:
+   ```bash
+   uv run --project . --module streamlit run app.py
    ```
 
-2. Install dependencies using [`uv`](https://github.com/astral-sh/uv):
-   ```bash
-   uv pip install -r requirements.txt
-   ```
+## Configuration
 
-### Usage
+Create a `.env` file in the root directory with your OpenRouter API key:
+```
+OPENROUTER_API_KEY=your_api_key_here
+```
 
-1. Run the Streamlit app:
-   ```bash
-   streamlit run app.py
-   ```
-
-2. Enter your OpenRouter API key when prompted
-3. Browse and filter models based on your requirements
-4. Select models to add them to your environment configuration
-5. Use the "Copy" button to copy the `.env` format to your clipboard
+You can get an API key from [OpenRouter.ai](https://openrouter.ai/).
 
 ## 📋 How It Works
 
@@ -75,6 +103,10 @@ The effectiveness score (0-10) considers:
 - **Preview Models**: +0.5 for preview models
 - **Model Size**: +1.5 for ≥70B, +1 for ≥30B, +0.5 for ≥7B
 - **Specialties**: +1 for models with both coding and reasoning, +1 for tool calling
+- **Recency**: +0.5 if released in the last 30 days, +0.25 if within the last year
+- **Quantization Penalty**: –0.5 for quantized variants (q4_, int4, int8, etc.)
+- **Family Bonus**: +0.5 for recognized strong model families (Mistral, LLaMA, Falcon, GPT)
+- **Multimodal**: +0.5 for models supporting vision, image, audio, or multimodal capabilities
 
 ### Capabilities
 

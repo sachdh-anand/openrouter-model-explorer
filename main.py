@@ -1,93 +1,141 @@
 import os
-import sys
+import json
+from dotenv import load_dotenv
+import json
 import requests
 import re
 from typing import Dict, List, Optional
 from datetime import datetime
 
+# Load environment variables
+load_dotenv()
 API_URL = "https://openrouter.ai/api/v1/models"
 API_KEY = os.getenv("OPENROUTER_API_KEY")
+# Load heuristics configuration
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config", "heuristics.json")
+with open(CONFIG_PATH, "r") as _f:
+    CONFIG = json.load(_f)
 
 def extract_params(name: str, description: str) -> Optional[float]:
     """Extract parameter count in billions from model name or description."""
-    # Common patterns: 7B, 7b, 7-b, 7 billion, etc.
-    patterns = [
-        r'(\d+\.?\d*)[-\s]?[bB](?!\w)',  # matches 7B, 7-b, 7 b
-        r'(\d+\.?\d*)\s*billion',  # matches 7 billion
-    ]
-    
+    # Extract based on configured regex patterns
+    patterns = CONFIG.get("extract_params", {}).get("patterns", [])
     for pattern in patterns:
-        for text in [name, description]:
+        for text in (name or "", description or ""):
             if match := re.search(pattern, text):
-                return float(match.group(1))
+                try:
+                    return float(match.group(1))
+                except (ValueError, TypeError):
+                    continue
     return None
 
 def extract_specialties(description: str, architecture: Dict) -> List[str]:
     """Extract key specialties from model description and architecture."""
     specialties = []
-    
-    # Define specialty keywords and their categories
-    specialty_map = {
-        'coding': ['code', 'programming', 'development', 'coder', 'developer'],
-        'reasoning': ['reason', 'logic', 'analytical', 'thinking', 'problem solving'],
-        'tool_calling': ['tool', 'function call', 'json', 'api', 'tool use', 'tool-use'],
-    }
-    
-    # Check description for keywords
-    for category, keywords in specialty_map.items():
-        if any(keyword.lower() in description.lower() for keyword in keywords):
-            specialties.append(category)
-    
-    # Check architecture for tool/function calling support
-    if architecture.get('instruct_type') in ['deepseek-r1', 'function-calling'] or \
-       'tool' in str(architecture).lower() or \
-       'function' in str(architecture).lower():
-        if 'tool_calling' not in specialties:
-            specialties.append('tool_calling')
-    
+    spec_cfg = CONFIG.get("specialties", {})
+    text = (description or "").lower()
+    arch_str = str(architecture or {}).lower()
+    # Check keywords per specialty
+    for category, cfg in spec_cfg.items():
+        for kw in cfg.get("keywords", []):
+            if kw.lower() in text:
+                specialties.append(category)
+                break
+    # Additionally detect tool_calling via architecture config
+    tool_cfg = spec_cfg.get("tool_calling", {})
+    # Instruct types support
+    for inst in tool_cfg.get("instruct_types", []):
+        if architecture.get("instruct_type") == inst:
+            if "tool_calling" not in specialties:
+                specialties.append("tool_calling")
+            break
+    # Architecture keywords support
+    for arch_kw in tool_cfg.get("architecture_keywords", []):
+        if arch_kw.lower() in arch_str:
+            if "tool_calling" not in specialties:
+                specialties.append("tool_calling")
+            break
     return specialties
 
 def calculate_effectiveness(model: Dict) -> float:
     """Calculate a rough effectiveness score (0-10) based on various factors."""
-    score = 5.0
-    
-    # Context length bonus
-    context_length = model.get('context_length', 0)
-    if context_length > 32768:  # 32k
-        score += 1
-    elif context_length > 16384:  # 16k
-        score += 0.5
-    
-    # Architecture and capabilities bonus
-    architecture = model.get('architecture', {})
-    
-    # Tool/function calling support
-    if architecture.get('instruct_type') in ['deepseek-r1', 'function-calling'] or \
-       'tool' in str(architecture).lower() or \
-       'function' in str(architecture).lower():
-        score += 1
-    
+    eff_cfg = CONFIG.get("effectiveness", {})
+    score = eff_cfg.get("base_score", 0.0)
+    # Context length bonuses
+    ctx = model.get("context_length", 0)
+    for th in eff_cfg.get("context_length", []):
+        if ctx > th.get("min", 0):
+            score += th.get("bonus", 0.0)
+            break
+    # Architecture support bonus
+    arch_cfg = eff_cfg.get("architecture", {})
+    arch = model.get("architecture", {})
+    added = False
+    for inst in arch_cfg.get("instruct_types", []):
+        if arch.get("instruct_type") == inst:
+            score += arch_cfg.get("bonus", 0.0)
+            added = True
+            break
+    if not added:
+        arch_str = str(arch).lower()
+        for kw in arch_cfg.get("keywords", []):
+            if kw.lower() in arch_str:
+                score += arch_cfg.get("bonus", 0.0)
+                break
     # Preview models bonus
-    if 'preview' in model.get('id', '').lower():
-        score += 0.5
-    
-    # Size bonus
-    params = extract_params(model.get('name', ''), model.get('description', ''))
-    if params:
-        if params >= 70:
-            score += 1.5
-        elif params >= 30:
-            score += 1
-        elif params >= 7:
-            score += 0.5
-    
-    # Specialty bonus
-    specialties = extract_specialties(model.get('description', ''), model.get('architecture', {}))
-    if 'coding' in specialties and 'reasoning' in specialties:
-        score += 1
-    if 'tool_calling' in specialties:
-        score += 1
-    
+    if "preview" in (model.get("id", "") or "").lower():
+        score += eff_cfg.get("preview_bonus", 0.0)
+    # Size-based bonuses
+    params = extract_params(model.get("name", ""), model.get("description", "")) or 0
+    for sz in eff_cfg.get("size", []):
+        if params >= sz.get("min", 0):
+            score += sz.get("bonus", 0.0)
+            break
+    # Specialty bonuses
+    specs = extract_specialties(model.get("description", ""), model.get("architecture", {}))
+    sb = eff_cfg.get("specialty_bonus", {})
+    # Specialty bonuses
+    if "coding" in specs and "reasoning" in specs:
+        score += sb.get("both_coding_reasoning", 0.0)
+    if "tool_calling" in specs:
+        score += sb.get("tool_calling", 0.0)
+
+    # Recency bonus (newer models)
+    rec_cfg = eff_cfg.get("recency", [])
+    created_ts = model.get("created")
+    if isinstance(created_ts, (int, float)):
+        try:
+            days_ago = (datetime.now() - datetime.fromtimestamp(created_ts)).days
+            for rec in rec_cfg:
+                if days_ago <= rec.get("max_days", 0):
+                    score += rec.get("bonus", 0.0)
+                    break
+        except Exception:
+            pass
+
+    # Quantization penalty for smaller/quantized variants
+    quant_cfg = eff_cfg.get("quantization", {})
+    text = ((model.get("name", "") or "") + " " + (model.get("description", "") or "")).lower()
+    for pat in quant_cfg.get("patterns", []):
+        if pat.lower() in text:
+            score -= quant_cfg.get("penalty", 0.0)
+            break
+
+    # Family bonus for known strong model families
+    fam_cfg = eff_cfg.get("family_bonus", {})
+    for fam, bonus in fam_cfg.items():
+        if fam.lower() in text:
+            score += bonus
+            break
+
+    # Multimodal capability bonus
+    mm_cfg = eff_cfg.get("multimodal", {})
+    for kw in mm_cfg.get("keywords", []):
+        if kw.lower() in text:
+            score += mm_cfg.get("bonus", 0.0)
+            break
+
+    # Clamp score to [0, 10]
     return min(10, max(0, score))
 
 def format_release_date(created: int) -> str:
@@ -99,132 +147,44 @@ def format_release_date(created: int) -> str:
 
 def is_free_or_preview(model: Dict) -> bool:
     """Check if model is free or preview version."""
-    model_id = model.get('id', '').lower()
-    model_name = model.get('name', '').lower()
-    
-    # Check for preview in id or name
-    is_preview = 'preview' in model_id or 'preview' in model_name
-    
-    # Check for free in id
-    is_free = ':free' in model_id
-    
-    # Check if all pricing is zero
-    pricing = model.get('pricing', {})
-    is_zero_price = all(float(price) == 0 for price in pricing.values() if price is not None)
-    
-    return is_preview or is_free or is_zero_price
+    model_id = (model.get('id') or '').lower()
+    model_name = (model.get('name') or '').lower()
+    # Preview or free tag
+    if 'preview' in model_id or 'preview' in model_name:
+        return True
+    if ':free' in model_id:
+        return True
+    # Zero pricing
+    pricing = model.get('pricing') or {}
+    if isinstance(pricing, dict):
+        try:
+            if all(float(v) == 0 for v in pricing.values() if v is not None):
+                return True
+        except (ValueError, TypeError):
+            pass
+    return False
 
-def format_model_info(models: List[Dict]) -> str:
-    """Format model information into a table string."""
-    # Filter for free and preview models only
-    filtered_models = [m for m in models if is_free_or_preview(m)]
-    
-    # Sort models by effectiveness score
-    models_with_scores = [(m, calculate_effectiveness(m)) for m in filtered_models]
-    sorted_models = sorted(models_with_scores, key=lambda x: x[1], reverse=True)
-    
-    # Column widths
-    col_widths = {
-        'name': 40,
-        'id': 45,
-        'params': 10,
-        'score': 8,
-        'date': 12,
-        'capabilities': 40
-    }
-    
-    # Prepare table header
-    header = (
-        f"{'Model Name':{col_widths['name']}} "
-        f"{'Model ID':{col_widths['id']}} "
-        f"{'Params':{col_widths['params']}} "
-        f"{'Score':{col_widths['score']}} "
-        f"{'Released':{col_widths['date']}} "
-        f"{'Capabilities':{col_widths['capabilities']}}"
+def fetch_all_models(retries: int = 3, backoff: float = 1.0, timeout: tuple = (5, 30)) -> List[Dict]:
+    """Fetch all models with retry/backoff. Returns list of model dicts."""
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=retries,
+        backoff_factor=backoff,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET"],
     )
-    
-    # Calculate total width for separator
-    total_width = sum(col_widths.values()) + 5  # +5 for spaces between columns
-    separator = "-" * total_width
-    
-    rows = [header, separator]
-    
-    for model, score in sorted_models:
-        # Only include models with relevant capabilities
-        specialties = extract_specialties(model.get('description', ''), model.get('architecture', {}))
-        if not any(s in specialties for s in ['coding', 'reasoning', 'tool_calling']):
-            continue
-            
-        # Format each column with proper truncation
-        name = model.get('name', 'Unknown')
-        if len(name) > col_widths['name']:
-            name = name[:col_widths['name']-3] + "..."
-            
-        model_id = model.get('id', 'N/A')
-        if len(model_id) > col_widths['id']:
-            model_id = model_id[:col_widths['id']-3] + "..."
-            
-        params = extract_params(model.get('name', ''), model.get('description', ''))
-        params_str = f"{params}B" if params else "N/A"
-        
-        # Build capabilities string
-        capabilities = []
-        if 'coding' in specialties:
-            capabilities.append('🖥️ Code')
-        if 'reasoning' in specialties:
-            capabilities.append('🤔 Reason')
-        if 'tool_calling' in specialties:
-            capabilities.append('🔧 Tools')
-        capabilities_str = ' + '.join(capabilities)
-        
-        release_date = format_release_date(model.get('created', None))
-        
-        # Format row with fixed widths
-        row = (
-            f"{name:{col_widths['name']}} "
-            f"{model_id:{col_widths['id']}} "
-            f"{params_str:{col_widths['params']}} "
-            f"{score:{col_widths['score']}.1f} "
-            f"{release_date:{col_widths['date']}} "
-            f"{capabilities_str:{col_widths['capabilities']}}"
-        )
-        rows.append(row)
-    
-    return "\n".join(rows)
-
-def fetch_all_models():
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
     headers = {"Authorization": f"Bearer {API_KEY}"}
-    resp = requests.get(API_URL, headers=headers)
-    resp.raise_for_status()
-    return resp.json().get("data", [])
-
-def main():
-    if not API_KEY:
-        sys.stderr.write("⚠️ Please set OPENROUTER_API_KEY\n")
-        sys.exit(1)
-
-    all_models = fetch_all_models()
-    free_and_preview = [m for m in all_models if is_free_or_preview(m)]
-    
-    # Count models with relevant capabilities
-    relevant_models = []
-    for model in free_and_preview:
-        specialties = extract_specialties(model.get('description', ''), model.get('architecture', {}))
-        if any(s in specialties for s in ['coding', 'reasoning', 'tool_calling']):
-            relevant_models.append(model)
-    
-    print(f"Total models available: {len(all_models)}")
-    print(f"Free & Preview models: {len(free_and_preview)}")
-    print(f"Models with coding/reasoning/tool capabilities: {len(relevant_models)}\n")
-    
-    print("Model Analysis (Free & Preview Models with Coding/Reasoning/Tool Capabilities):")
-    print(format_model_info(all_models))
-    
-    print("\nLegend:")
-    print("- Score: 0-10 scale based on context length, capabilities, and model size")
-    print("- Params: Model size in billions of parameters")
-    print("- Released: Date when the model was made available")
-    print("- Capabilities: 🖥️ Code = Coding, 🤔 Reason = Reasoning, 🔧 Tools = Tool/Function calling")
-
-if __name__ == "__main__":
-    main()
+    try:
+        resp = session.get(API_URL, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    return []

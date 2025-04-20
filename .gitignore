@@ -49,3 +49,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# UV environment
+uv-env/
+
+# .env files with API keys
+.env

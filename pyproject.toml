@@ -1,7 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "openrouter-models"
+name = "openrouter-model-explorer"
 version = "0.1.0"
-description = "Add your description here"
+description = "A powerful, interactive dashboard to discover, compare, and select the best free and preview AI models available on OpenRouter"
 readme = "README.md"
-requires-python = ">=3.12"
-dependencies = []
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "OpenRouter Model Explorer"}
+]
+dependencies = [
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+    "streamlit>=1.32.0",
+    "streamlit-aggrid>=0.3.4",
+    "pandas>=2.0.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/yourusername/openrouter-model-explorer"
+"Bug Tracker" = "https://github.com/yourusername/openrouter-model-explorer/issues"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["main.py", "app.py"]

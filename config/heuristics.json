@@ -1,0 +1,61 @@
+{
+  "extract_params": {
+    "patterns": [
+      "(\\d+\\.?\\d*)[-\\s]?[bB](?!\\w)",
+      "(\\d+\\.?\\d*)\\s*billion"
+    ]
+  },
+  "specialties": {
+    "coding": {
+      "keywords": ["code", "programming", "development", "coder", "developer"]
+    },
+    "reasoning": {
+      "keywords": ["reason", "logic", "analytical", "thinking", "problem solving"]
+    },
+    "tool_calling": {
+      "keywords": ["tool", "function call", "json", "api", "tool use", "tool-use"],
+      "instruct_types": ["deepseek-r1", "function-calling"],
+      "architecture_keywords": ["tool", "function"]
+    }
+  },
+  "effectiveness": {
+    "base_score": 5.0,
+    "context_length": [
+      {"min": 32768, "bonus": 1.0},
+      {"min": 16384, "bonus": 0.5}
+    ],
+    "architecture": {
+      "instruct_types": ["deepseek-r1", "function-calling"],
+      "keywords": ["tool", "function"],
+      "bonus": 1.0
+    },
+    "preview_bonus": 0.5,
+    "size": [
+      {"min": 70, "bonus": 1.5},
+      {"min": 30, "bonus": 1.0},
+      {"min": 7, "bonus": 0.5}
+    ],
+    "specialty_bonus": {
+      "both_coding_reasoning": 1.0,
+      "tool_calling": 1.0
+    },
+    "recency": [
+      { "max_days": 30,  "bonus": 0.5 },
+      { "max_days": 365, "bonus": 0.25 }
+    ],
+    "quantization": {
+      "patterns": ["q4_", "quantized", "int4", "int8"],
+      "penalty": 0.5
+    },
+    "family_bonus": {
+      "mistral": 0.5,
+      "llama": 0.5,
+      "falcon": 0.5,
+      "gpt": 0.5
+    },
+    "multimodal": {
+      "keywords": ["vision", "image", "audio", "multimodal"],
+      "bonus": 0.5
+    }
+  }
+}
